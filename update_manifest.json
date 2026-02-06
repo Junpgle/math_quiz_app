@@ -1,15 +1,15 @@
 {
-  "version_code": 2,
-  "version_name": "1.0.0",
-  "force_update": false,
+  "version_code": 3,
+  "version_name": "1.1.0",
+  "force_update": true,
   "update_info": {
-    "title": "版本更新 1.0.0",
-    "description": "1. 修复了乘法计算的Bug\n2. 优化了排行榜显示\n3. 新增了每日壁纸功能",
-    "full_package_url": "https://github.com/Junpgle/math_quiz_app/releases/download/v1.0.0/1.0.0.apk",
-    "patch_package_url": "https://github.com/Junpgle/math_quiz_app/releases/download/v1.0.0/1.0.0.apk"
+    "title": "版本更新 1.1.0",
+    "description": "- v1.1.0 新增图标\n- v1.0.4 重构清爽主页,新增倒计时、今日待办模块\n- v1.0.3 修复了更新下载完之后没有弹窗的问题 \n- v1.0.2 新增记住密码自动登录\n- v1.0.1 主界面引入Material Design 新增检查更新",
+    "full_package_url": "https://github.com/Junpgle/math_quiz_app/releases/download/v1.1.0/1.1.0.apk",
+    "patch_package_url": "https://github.com/Junpgle/math_quiz_app/releases/download/v1.1.0/1.1.0.apk"
   },
   "announcement": {
-    "show": true,
+    "show": false,
     "title": "系统公告",
     "content": "嘿嘿，欢迎使用我们的应用！我们不断努力为您提供更好的体验。"
   },
