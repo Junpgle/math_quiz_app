@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../storage_service.dart';
-import 'home_screen.dart';
+import 'home_dashboard.dart'; // 修改：引入新的 Dashboard
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -21,20 +21,19 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _isLoading = true);
 
-    // 1. 验证账号密码
     bool success = await StorageService.login(user, pass);
 
     if (!mounted) return;
     setState(() => _isLoading = false);
 
     if (success) {
-      // 2. 核心修改：登录成功后，必须调用保存状态的方法
       await StorageService.saveLoginSession(user);
 
       if (!mounted) return;
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => HomeScreen(username: user)),
+        // 修改：跳转到新主页 HomeDashboard
+        MaterialPageRoute(builder: (context) => HomeDashboard(username: user)),
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -65,22 +64,24 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('小学生数学测验 - 登录')),
+      appBar: AppBar(title: const Text('效率 & 数学 - 登录')),
       body: Padding(
         padding: const EdgeInsets.all(20.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Text("数学测验系统", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            const Icon(Icons.school, size: 80, color: Colors.blue),
+            const SizedBox(height: 20),
+            const Text("效率 & 数学助手", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
             const SizedBox(height: 30),
             TextField(
               controller: _userController,
-              decoration: const InputDecoration(labelText: '用户名', border: OutlineInputBorder()),
+              decoration: const InputDecoration(labelText: '用户名', border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)),
             ),
             const SizedBox(height: 15),
             TextField(
               controller: _passController,
-              decoration: const InputDecoration(labelText: '密码', border: OutlineInputBorder()),
+              decoration: const InputDecoration(labelText: '密码', border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
               obscureText: true,
             ),
             const SizedBox(height: 30),
@@ -89,7 +90,7 @@ class _LoginScreenState extends State<LoginScreen> {
             else
               Row(
                 children: [
-                  Expanded(child: ElevatedButton(onPressed: _handleLogin, child: const Text("登录"))),
+                  Expanded(child: FilledButton(onPressed: _handleLogin, child: const Text("登录"))),
                   const SizedBox(width: 10),
                   Expanded(child: OutlinedButton(onPressed: _handleRegister, child: const Text("注册"))),
                 ],

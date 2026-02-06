@@ -1,23 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_downloader/flutter_downloader.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'screens/login_screen.dart';
-import 'screens/home_screen.dart'; // 引入 Home Screen
-import 'storage_service.dart'; // 引入 Storage Service
+import 'screens/home_dashboard.dart';
+import 'storage_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 初始化下载插件
   try {
-    await FlutterDownloader.initialize(
-        debug: true,
-        ignoreSsl: true
-    );
+    await FlutterDownloader.initialize(debug: true, ignoreSsl: true);
   } catch (e) {
     print("Downloader init failed: $e");
   }
 
-  // 关键修改：启动前检查是否已有保存的登录用户
+  // 启动时请求关键权限
+  if (await Permission.notification.isDenied) {
+    await Permission.notification.request();
+  }
+  if (await Permission.requestInstallPackages.isDenied) {
+    await Permission.requestInstallPackages.request();
+  }
+
   String? loggedInUser = await StorageService.getLoginSession();
 
   runApp(MyApp(initialUser: loggedInUser));
@@ -26,21 +31,33 @@ void main() async {
 class MyApp extends StatelessWidget {
   final String? initialUser;
 
-  // 构造函数接收初始用户
   const MyApp({super.key, this.initialUser});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '小学生数学测验系统',
+      title: '效率 & 数学',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.blue,
+          brightness: Brightness.light,
+        ),
         useMaterial3: true,
       ),
-      // 如果有保存的用户且不为空，直接进主页，否则进登录页
+      // 国际化配置
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('zh', 'CN'),
+        Locale('en', 'US'),
+      ],
+      // 路由判断
       home: initialUser != null && initialUser!.isNotEmpty
-          ? HomeScreen(username: initialUser!)
+          ? HomeDashboard(username: initialUser!)
           : const LoginScreen(),
     );
   }

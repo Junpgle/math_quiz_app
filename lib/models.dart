@@ -1,5 +1,7 @@
 import 'dart:math';
 
+// --- 测验相关 ---
+
 class Question {
   int num1;
   int num2;
@@ -52,14 +54,10 @@ class QuestionGenerator {
     int maxN2 = settings['max_num2'] ?? 50;
     int maxRes = settings['max_result'] ?? 100;
 
-    int attempts = 0; // 防止死循环
+    int attempts = 0;
     while (questions.length < count && attempts < count * 100) {
       attempts++;
-
-      // 随机选择运算符
       String op = operators[rng.nextInt(operators.length)];
-
-      // 生成操作数
       int n1 = minN1 + rng.nextInt(maxN1 - minN1 + 1);
       int n2 = minN2 + rng.nextInt(maxN2 - minN2 + 1);
       int ans = 0;
@@ -69,7 +67,6 @@ class QuestionGenerator {
         ans = n1 + n2;
         if (ans <= maxRes) isValid = true;
       } else if (op == '-') {
-        // 减法：结果不能为负
         if (n1 >= n2) {
           ans = n1 - n2;
           isValid = true;
@@ -78,7 +75,6 @@ class QuestionGenerator {
         ans = n1 * n2;
         if (ans <= maxRes) isValid = true;
       } else if (op == '/') {
-        // 除法：除数不能为0，且必须整除
         if (n2 != 0 && n1 % n2 == 0) {
           ans = n1 ~/ n2;
           isValid = true;
@@ -86,16 +82,70 @@ class QuestionGenerator {
       }
 
       if (isValid) {
-        questions.add(Question(
-          num1: n1,
-          num2: n2,
-          operatorSymbol: op,
-          correctAnswer: ans,
-        ));
+        questions.add(Question(num1: n1, num2: n2, operatorSymbol: op, correctAnswer: ans));
       }
     }
-
-    // 如果尝试多次仍无法生成足够的题目（例如设置范围太小），则返回已生成的题目
     return questions;
   }
+}
+
+// --- 效率功能相关 (新增部分) ---
+
+class CountdownItem {
+  String title;
+  DateTime targetDate;
+
+  CountdownItem({required this.title, required this.targetDate});
+
+  Map<String, dynamic> toJson() => {
+    'title': title,
+    'targetDate': targetDate.toIso8601String(),
+  };
+
+  factory CountdownItem.fromJson(Map<String, dynamic> json) => CountdownItem(
+    title: json['title'],
+    targetDate: DateTime.parse(json['targetDate']),
+  );
+}
+
+enum RecurrenceType { none, daily, customDays }
+
+class TodoItem {
+  String id;
+  String title;
+  bool isDone;
+  RecurrenceType recurrence;
+  int? customIntervalDays; // 隔几天重复
+  DateTime? recurrenceEndDate; // 重复截止日期
+  DateTime lastUpdated; // 上次更新状态的时间
+
+  TodoItem({
+    required this.id,
+    required this.title,
+    this.isDone = false,
+    this.recurrence = RecurrenceType.none,
+    this.customIntervalDays,
+    this.recurrenceEndDate,
+    required this.lastUpdated,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'isDone': isDone,
+    'recurrence': recurrence.index,
+    'customIntervalDays': customIntervalDays,
+    'recurrenceEndDate': recurrenceEndDate?.toIso8601String(),
+    'lastUpdated': lastUpdated.toIso8601String(),
+  };
+
+  factory TodoItem.fromJson(Map<String, dynamic> json) => TodoItem(
+    id: json['id'],
+    title: json['title'],
+    isDone: json['isDone'],
+    recurrence: RecurrenceType.values[json['recurrence'] ?? 0],
+    customIntervalDays: json['customIntervalDays'],
+    recurrenceEndDate: json['recurrenceEndDate'] != null ? DateTime.parse(json['recurrenceEndDate']) : null,
+    lastUpdated: json['lastUpdated'] != null ? DateTime.parse(json['lastUpdated']) : DateTime.now(),
+  );
 }

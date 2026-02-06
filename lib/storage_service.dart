@@ -1,115 +1,168 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
+import 'models.dart'; // 必须引用这个文件
 
 class StorageService {
+  // 忽略大写命名警告 (Dart Lint)
+  // ignore: constant_identifier_names
   static const String KEY_USERS = "users_data";
+  // ignore: constant_identifier_names
   static const String KEY_LEADERBOARD = "leaderboard_data";
+  // ignore: constant_identifier_names
   static const String KEY_SETTINGS = "quiz_settings";
-  // 新增：保存当前登录用户的 Key
+  // ignore: constant_identifier_names
   static const String KEY_CURRENT_USER = "current_login_user";
+
+  // ignore: constant_identifier_names
+  static const String KEY_TODOS = "user_todos";
+  // ignore: constant_identifier_names
+  static const String KEY_COUNTDOWNS = "user_countdowns";
 
   // 注册用户
   static Future<bool> register(String username, String password) async {
     final prefs = await SharedPreferences.getInstance();
     Map<String, dynamic> users = {};
-
     String? usersJson = prefs.getString(KEY_USERS);
-    if (usersJson != null) {
-      users = jsonDecode(usersJson);
-    }
-
-    if (users.containsKey(username)) {
-      return false; // 用户已存在
-    }
-
+    if (usersJson != null) users = jsonDecode(usersJson);
+    if (users.containsKey(username)) return false;
     users[username] = password;
     await prefs.setString(KEY_USERS, jsonEncode(users));
     return true;
   }
 
-  // 登录验证
   static Future<bool> login(String username, String password) async {
     final prefs = await SharedPreferences.getInstance();
     String? usersJson = prefs.getString(KEY_USERS);
     if (usersJson == null) return false;
-
     Map<String, dynamic> users = jsonDecode(usersJson);
     return users.containsKey(username) && users[username] == password;
   }
 
-  // --- 新增：自动登录相关方法 ---
-
-  // 保存登录状态
   static Future<void> saveLoginSession(String username) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(KEY_CURRENT_USER, username);
   }
 
-  // 获取当前登录用户 (如果没有则返回 null)
   static Future<String?> getLoginSession() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(KEY_CURRENT_USER);
   }
 
-  // 清除登录状态 (退出登录)
   static Future<void> clearLoginSession() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(KEY_CURRENT_USER);
   }
 
-  // -------------------------
+  static Future<void> saveSettings(Map<String, dynamic> settings) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(KEY_SETTINGS, jsonEncode(settings));
+  }
 
-  // 保存测试记录 (历史记录)
+  static Future<Map<String, dynamic>> getSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? jsonStr = prefs.getString(KEY_SETTINGS);
+    if (jsonStr != null) return Map<String, dynamic>.from(jsonDecode(jsonStr));
+    return {
+      'operators': ['+', '-'],
+      'min_num1': 0, 'max_num1': 50,
+      'min_num2': 0, 'max_num2': 50,
+      'max_result': 100,
+    };
+  }
+
+  // --- 历史记录与统计 ---
+
   static Future<void> saveHistory(String username, int score, int duration, String details) async {
     final prefs = await SharedPreferences.getInstance();
     String key = "history_$username";
     List<String> history = prefs.getStringList(key) ?? [];
 
-    String timeStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
-    String record = "时间: $timeStr\n得分: $score\n用时: ${duration}秒\n详情:\n$details\n-----------------";
+    Map<String, dynamic> recordMap = {
+      'date': DateTime.now().toIso8601String(),
+      'score': score,
+      'duration': duration,
+      'details': details
+    };
 
-    history.insert(0, record); // 最新记录插在最前
+    history.insert(0, jsonEncode(recordMap));
     await prefs.setStringList(key, history);
   }
 
-  // 获取用户历史
   static Future<List<String>> getHistory(String username) async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getStringList("history_$username") ?? [];
+    List<String> rawList = prefs.getStringList("history_$username") ?? [];
+
+    return rawList.map((item) {
+      try {
+        var map = jsonDecode(item);
+        if (map is Map) {
+          String timeStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.parse(map['date']));
+          return "时间: $timeStr\n得分: ${map['score']}\n用时: ${map['duration']}秒\n详情:\n${map['details']}\n-----------------";
+        }
+        return item;
+      } catch (e) {
+        return item;
+      }
+    }).toList();
   }
 
-  // 更新排行榜
+  static Future<Map<String, dynamic>> getMathStats(String username) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> rawList = prefs.getStringList("history_$username") ?? [];
+
+    int totalQuestions = 0;
+    int totalCorrect = 0;
+    int bestTime = 999999;
+    bool hasPerfectScore = false;
+
+    for (var item in rawList) {
+      try {
+        var map = jsonDecode(item);
+        int score = map['score'];
+        int duration = map['duration'];
+
+        totalQuestions += 10;
+        totalCorrect += (score ~/ 10);
+
+        if (score == 100) {
+          hasPerfectScore = true;
+          if (duration < bestTime) bestTime = duration;
+        }
+      } catch (e) {
+        // 旧数据兼容处理
+        RegExp scoreReg = RegExp(r"得分: (\d+)");
+        var match = scoreReg.firstMatch(item);
+        if (match != null) {
+          int score = int.parse(match.group(1)!);
+          totalQuestions += 10;
+          totalCorrect += (score ~/ 10);
+        }
+      }
+    }
+
+    double accuracy = totalQuestions == 0 ? 0.0 : (totalCorrect / totalQuestions);
+
+    return {
+      'accuracy': accuracy,
+      'bestTime': hasPerfectScore ? bestTime : null,
+    };
+  }
+
   static Future<void> updateLeaderboard(String username, int score, int duration) async {
     final prefs = await SharedPreferences.getInstance();
     List<dynamic> list = [];
-
     String? jsonStr = prefs.getString(KEY_LEADERBOARD);
-    if (jsonStr != null) {
-      list = jsonDecode(jsonStr);
-    }
-
-    list.add({
-      'username': username,
-      'score': score,
-      'time': duration,
-    });
-
-    // 排序：分数高优先，分数相同时间短优先
+    if (jsonStr != null) list = jsonDecode(jsonStr);
+    list.add({'username': username, 'score': score, 'time': duration});
     list.sort((a, b) {
-      if (a['score'] != b['score']) {
-        return b['score'].compareTo(a['score']); // 降序
-      }
-      return a['time'].compareTo(b['time']); // 升序
+      if (a['score'] != b['score']) return b['score'].compareTo(a['score']);
+      return a['time'].compareTo(b['time']);
     });
-
-    // 只保留前10
     if (list.length > 10) list = list.sublist(0, 10);
-
     await prefs.setString(KEY_LEADERBOARD, jsonEncode(list));
   }
 
-  // 获取排行榜
   static Future<List<Map<String, dynamic>>> getLeaderboard() async {
     final prefs = await SharedPreferences.getInstance();
     String? jsonStr = prefs.getString(KEY_LEADERBOARD);
@@ -117,27 +170,65 @@ class StorageService {
     return List<Map<String, dynamic>>.from(jsonDecode(jsonStr));
   }
 
-  // 保存设置
-  static Future<void> saveSettings(Map<String, dynamic> settings) async {
+  // --- 待办事项与倒计时 ---
+
+  static Future<void> saveCountdowns(String username, List<CountdownItem> items) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(KEY_SETTINGS, jsonEncode(settings));
+    List<String> jsonList = items.map((e) => jsonEncode(e.toJson())).toList();
+    await prefs.setStringList("${KEY_COUNTDOWNS}_$username", jsonList);
   }
 
-  // 获取设置 (带默认值)
-  static Future<Map<String, dynamic>> getSettings() async {
+  static Future<List<CountdownItem>> getCountdowns(String username) async {
     final prefs = await SharedPreferences.getInstance();
-    String? jsonStr = prefs.getString(KEY_SETTINGS);
+    List<String> list = prefs.getStringList("${KEY_COUNTDOWNS}_$username") ?? [];
+    return list.map((e) => CountdownItem.fromJson(jsonDecode(e))).toList();
+  }
 
-    if (jsonStr != null) {
-      return Map<String, dynamic>.from(jsonDecode(jsonStr));
+  static Future<void> saveTodos(String username, List<TodoItem> items) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> jsonList = items.map((e) => jsonEncode(e.toJson())).toList();
+    await prefs.setStringList("${KEY_TODOS}_$username", jsonList);
+  }
+
+  static Future<List<TodoItem>> getTodos(String username) async {
+    final prefs = await SharedPreferences.getInstance();
+    List<String> list = prefs.getStringList("${KEY_TODOS}_$username") ?? [];
+    List<TodoItem> todos = list.map((e) => TodoItem.fromJson(jsonDecode(e))).toList();
+
+    DateTime now = DateTime.now();
+    bool needSave = false;
+
+    for (var todo in todos) {
+      if (todo.recurrenceEndDate != null && now.isAfter(todo.recurrenceEndDate!)) {
+        continue;
+      }
+
+      bool isNewDay = !_isSameDay(todo.lastUpdated, now);
+
+      if (isNewDay) {
+        if (todo.recurrence == RecurrenceType.daily) {
+          todo.isDone = false;
+          todo.lastUpdated = now;
+          needSave = true;
+        } else if (todo.recurrence == RecurrenceType.customDays && todo.customIntervalDays != null) {
+          int diff = now.difference(todo.lastUpdated).inDays;
+          if (diff >= todo.customIntervalDays!) {
+            todo.isDone = false;
+            todo.lastUpdated = now;
+            needSave = true;
+          }
+        }
+      }
     }
 
-    // 默认设置
-    return {
-      'operators': ['+', '-'], // 默认加减
-      'min_num1': 0, 'max_num1': 50,
-      'min_num2': 0, 'max_num2': 50,
-      'max_result': 100,
-    };
+    if (needSave) {
+      await saveTodos(username, todos);
+    }
+
+    return todos;
+  }
+
+  static bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 }
