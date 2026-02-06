@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart';
-import 'dart:io'; // 新增
-import 'package:flutter_downloader/flutter_downloader.dart'; // 新增
-import 'package:path_provider/path_provider.dart'; // 新增
-import 'package:package_info_plus/package_info_plus.dart'; // 新增
-import 'package:permission_handler/permission_handler.dart'; // 新增
+import 'dart:io';
+import 'package:flutter_downloader/flutter_downloader.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../models.dart';
 import '../storage_service.dart';
-import '../update_service.dart'; // 新增
+import '../update_service.dart';
 import 'math_menu_screen.dart';
 import 'login_screen.dart';
 
@@ -460,7 +460,6 @@ class _HomeDashboardState extends State<HomeDashboard> {
         ),
         toolbarHeight: 80,
         actions: [
-          // 新增：检查更新按钮
           IconButton(
             icon: const Icon(Icons.system_update),
             tooltip: "检查更新",
@@ -545,13 +544,25 @@ class _HomeDashboardState extends State<HomeDashboard> {
             if (_todos.isEmpty)
               _buildEmptyState("今日无待办")
             else if (!_isTodoExpanded)
-              Card(
-                elevation: 0,
-                color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
-                child: const ListTile(
-                  leading: Icon(Icons.check_circle, color: Colors.green),
-                  title: Text("待办已折叠 (或全部完成)"),
-                ),
+            // 修改：折叠时显示详细状态
+              Builder(
+                  builder: (context) {
+                    int pendingCount = _todos.where((t) => !t.isDone).length;
+                    bool isAllDone = pendingCount == 0;
+                    return Card(
+                      elevation: 0,
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                      child: ListTile(
+                        leading: Icon(
+                            isAllDone ? Icons.check_circle : Icons.pending_actions,
+                            color: isAllDone ? Colors.green : Colors.orange
+                        ),
+                        title: Text(isAllDone ? "所有待办均已完成" : "还有 $pendingCount 个待办未完成"),
+                        trailing: const Icon(Icons.expand_more),
+                        onTap: () => setState(() => _isTodoExpanded = true),
+                      ),
+                    );
+                  }
               )
             else
               Column(

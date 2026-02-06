@@ -1,7 +1,7 @@
 name: math_quiz_app
 description: A new Flutter project.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -9,10 +9,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # 新增：本地化支持 (用于显示中文日期)
   flutter_localizations:
     sdk: flutter
-
   shared_preferences: ^2.2.0
   intl: ^0.20.2
   http: ^1.2.0
@@ -21,13 +19,18 @@ dependencies:
   flutter_downloader: ^1.11.3
   path_provider: ^2.1.2
   permission_handler: ^11.3.0
-  # 新增：用于生成唯一的待办ID
   uuid: ^4.2.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
