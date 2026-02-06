@@ -1,14 +1,15 @@
 import 'package:flutter/material.dart';
-import 'dart:io'; // 新增
-import 'package:flutter_downloader/flutter_downloader.dart'; // 新增
-import 'package:path_provider/path_provider.dart'; // 新增
-import 'package:package_info_plus/package_info_plus.dart'; // 新增：用于获取版本名称
+import 'dart:io';
+import 'package:flutter_downloader/flutter_downloader.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:permission_handler/permission_handler.dart'; // 新增
 import 'quiz_screen.dart';
 import 'other_screens.dart';
 import 'login_screen.dart';
 import 'settings_screen.dart';
-import '../update_service.dart'; // 引入更新服务
-import '../storage_service.dart'; // 引入存储服务，用于清除登录状态
+import '../update_service.dart';
+import '../storage_service.dart';
 
 class HomeScreen extends StatefulWidget {
   final String username;
@@ -23,42 +24,48 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    // 页面加载完成后自动检查更新 (静默模式)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkUpdatesAndNotices(isManual: false);
     });
   }
 
-  // 新增：后台下载方法
+  // 修改：后台下载方法
   Future<void> _startBackgroundDownload(String url) async {
     if (!Platform.isAndroid) {
-      // 非Android平台回退到浏览器下载
       UpdateService.launchURL(url);
       return;
     }
 
-    // 获取Android外部存储路径 (无需额外权限即可写入 app-specific 目录)
-    // 路径通常为: /storage/emulated/0/Android/data/com.example.math_quiz_app/files
+    // --- 新增：下载前再次确保有通知权限 ---
+    var status = await Permission.notification.status;
+    if (!status.isGranted) {
+      status = await Permission.notification.request();
+      if (!status.isGranted) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('需要通知权限才能显示下载进度')),
+        );
+        // 这里可以选择 return 终止下载，也可以继续下载但告诉用户没通知
+        // return;
+      }
+    }
+    // ------------------------------------
+
     final dir = await getExternalStorageDirectory();
 
     if (dir != null) {
-      // 修复：确保目录存在，否则会导致下载失败
       if (!await dir.exists()) {
         await dir.create(recursive: true);
       }
 
-      // 1. 显式提取文件名 (关键修复：防止 flutter_downloader 内部 NPE)
       String fileName = url.split('/').last;
-      // 处理 URL 参数 (例如 file.apk?token=xyz)
       if (fileName.contains('?')) {
         fileName = fileName.split('?').first;
       }
-      // 兜底默认文件名
       if (fileName.isEmpty || !fileName.endsWith('.apk')) {
         fileName = 'update.apk';
       }
 
-      // 2. 如果文件已存在，先删除（可选，保持干净）
       final file = File('${dir.path}/$fileName');
       if (await file.exists()) {
         try {
@@ -72,10 +79,10 @@ class _HomeScreenState extends State<HomeScreen> {
         await FlutterDownloader.enqueue(
           url: url,
           savedDir: dir.path,
-          fileName: fileName, // 显式传递文件名
-          showNotification: true, // 显示下载进度通知
-          openFileFromNotification: true, // 点击通知打开文件(安装APK)
-          saveInPublicStorage: false, // 必须为false，因为我们用的是应用私有目录
+          fileName: fileName,
+          showNotification: true,
+          openFileFromNotification: true, // 这一步需要 RequestInstallPackages 权限才生效
+          saveInPublicStorage: false,
         );
 
         if (!mounted) return;
@@ -95,13 +102,11 @@ class _HomeScreenState extends State<HomeScreen> {
   // 修改：增加 isManual 参数，区分自动检查和手动检查
   Future<void> _checkUpdatesAndNotices({bool isManual = false}) async {
     if (isManual) {
-      // 手动检查时显示加载提示
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('正在检查更新...'), duration: Duration(seconds: 1)),
       );
     }
 
-    // 1. 获取远程配置
     AppManifest? manifest = await UpdateService.checkManifest();
 
     if (manifest == null) {
@@ -113,20 +118,16 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    // 2. 获取本地版本信息 (修改：直接获取PackageInfo以显示版本名)
     PackageInfo packageInfo = await PackageInfo.fromPlatform();
     int localBuild = int.tryParse(packageInfo.buildNumber) ?? 0;
     String localVersionName = packageInfo.version;
 
-    // 3. 判断是否需要展示 (有更新 或者 有公告)
     bool hasUpdate = manifest.versionCode > localBuild;
     bool hasNotice = manifest.announcement.show;
     bool hasWallpaper = manifest.wallpaper.show;
 
-    // 如果没有任何更新/公告
     if (!hasUpdate && !hasNotice && !hasWallpaper) {
       if (isManual && mounted) {
-        // 手动检查且无更新时，明确告知用户
         showDialog(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -141,14 +142,11 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
-    // 如果是自动检查，且没有更新也没有强制公告，可能就不打扰用户（取决于你的策略，这里保持只要有内容就弹窗）
-
     if (!mounted) return;
 
-    // 4. 弹出对话框
     showDialog(
       context: context,
-      barrierDismissible: !manifest.forceUpdate, // 强制更新时点击背景无法关闭
+      barrierDismissible: !manifest.forceUpdate,
       builder: (context) {
         return AlertDialog(
           contentPadding: EdgeInsets.zero,
@@ -157,7 +155,6 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // --- 壁纸区域 (如果有) ---
                 if (hasWallpaper && manifest.wallpaper.imageUrl.isNotEmpty)
                   ClipRRect(
                     borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
@@ -184,7 +181,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // --- 版本更新信息 ---
                       if (hasUpdate) ...[
                         Row(
                           children: [
@@ -195,7 +191,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                         const SizedBox(height: 6),
-                        // 新增：版本对比提示
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
@@ -218,16 +213,13 @@ class _HomeScreenState extends State<HomeScreen> {
                                 icon: const Icon(Icons.download),
                                 label: const Text("下载全量包 (APK)"),
                                 style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
-                                // 修改：调用后台下载
                                 onPressed: () => _startBackgroundDownload(manifest.updateInfo.fullPackageUrl),
                               ),
-                            // 已移除增量包按钮
                           ],
                         ),
                         const Divider(height: 30),
                       ],
 
-                      // --- 公告信息 ---
                       if (hasNotice) ...[
                         Row(
                           children: [
@@ -375,7 +367,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   colorEnd: const Color(0xFFfecfef),
                   icon: Icons.logout_rounded,
                   onTap: () async {
-                    // 修改：清除登录Session，实现真正退出
                     await StorageService.clearLoginSession();
                     if (context.mounted) {
                       Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
