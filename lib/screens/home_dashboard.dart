@@ -7,7 +7,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_downloader/flutter_downloader.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart'; // 新增：用于读取userId和原始数据
+import 'package:shared_preferences/shared_preferences.dart';
 import '../notification_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -35,7 +35,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
 
   String? _wallpaperUrl;
   bool _isTodoExpanded = true;
-  bool _isSyncing = false; // 新增：同步状态
+  bool _isSyncing = false;
 
   @override
   void initState() {
@@ -55,16 +55,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
     }
   }
 
-  void _updateDataAndNotify() {
-    setState(() {});
-    StorageService.saveTodos(widget.username, _todos);
-    NotificationService.updateTodoNotification(_todos);
-  }
-
-  void _refreshData() {
-    _loadAllData();
-  }
-
+  // 刷新界面数据
   Future<void> _loadAllData() async {
     final countdowns = await StorageService.getCountdowns(widget.username);
     final todos = await StorageService.getTodos(widget.username);
@@ -87,183 +78,39 @@ class _HomeDashboardState extends State<HomeDashboard> {
     }
   }
 
-  // --- 手动双向云同步逻辑 ---
-  Future<void> _handleCloudSync() async {
+  // --- 手动云同步 (调用 StorageService) ---
+  Future<void> _handleManualSync() async {
+    if (_isSyncing) return;
     setState(() => _isSyncing = true);
+
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('正在与云端进行双向同步...'), duration: Duration(seconds: 20)),
+      const SnackBar(content: Text('正在同步云端数据...'), duration: Duration(seconds: 2)),
     );
 
     try {
       final prefs = await SharedPreferences.getInstance();
       int? userId = prefs.getInt('current_user_id');
-
       if (userId == null) {
-        throw Exception("请先登录云端账号");
+        throw Exception("未登录，无法同步");
       }
 
-      int uploadCount = 0;
-      int downloadCount = 0;
+      // 调用服务层同步方法
+      bool hasChanges = await StorageService.syncData(widget.username);
 
-      // ===========================
-      // 1. 同步最佳成绩 (本地 -> 云端)
-      // ===========================
-      // 读取本地历史记录
-      List<String> historyList = prefs.getStringList("history_${widget.username}") ?? [];
-      int bestScore = 0;
-      int bestDuration = 9999;
-
-      for (var item in historyList) {
-        try {
-          var map = jsonDecode(item);
-          int s = map['score'];
-          int d = map['duration'];
-          if (s > bestScore) {
-            bestScore = s;
-            bestDuration = d;
-          } else if (s == bestScore && d < bestDuration) {
-            bestDuration = d;
-          }
-        } catch (_) {}
-      }
-
-      if (bestScore > 0) {
-        await ApiService.uploadScore(
-          userId: userId,
-          username: widget.username,
-          score: bestScore,
-          duration: bestDuration,
-        );
-      }
-
-      // ===========================
-      // 2. 同步待办事项 (双向合并)
-      // ===========================
-      // 获取云端数据
-      List<dynamic> cloudTodos = await ApiService.fetchTodos(userId);
-
-      // 构建云端映射: Content -> Item
-      Map<String, dynamic> cloudTodoMap = {};
-      for (var t in cloudTodos) {
-        String content = t['content'] ?? "";
-        if (content.isNotEmpty) cloudTodoMap[content] = t;
-      }
-
-      // 构建本地映射: Title -> Item
-      Map<String, TodoItem> localTodoMap = {};
-      for (var t in _todos) {
-        localTodoMap[t.title] = t;
-      }
-
-      // A. 本地 -> 云端 (上传本地独有且未完成的任务)
-      for (var t in _todos) {
-        if (!cloudTodoMap.containsKey(t.title)) {
-          if (!t.isDone) {
-            await ApiService.addTodo(userId, t.title);
-            uploadCount++;
-          }
-        }
-      }
-
-      // B. 云端 -> 本地 (下载云端独有的任务 - 恢复数据)
-      bool localTodosChanged = false;
-      for (var content in cloudTodoMap.keys) {
-        if (!localTodoMap.containsKey(content)) {
-          var cItem = cloudTodoMap[content];
-          // 仅拉取未完成的任务进行恢复 (已完成的视为历史)
-          bool isCompleted = cItem['is_completed'] == 1 || cItem['is_completed'] == true;
-
-          if (!isCompleted) {
-            _todos.insert(0, TodoItem(
-              id: const Uuid().v4(),
-              title: content,
-              isDone: false,
-              recurrence: RecurrenceType.none,
-              lastUpdated: DateTime.now(), // 视为新同步的本地项
-            ));
-            localTodosChanged = true;
-            downloadCount++;
-          }
-        }
-      }
-
-      // 如果本地待办有变动，保存并更新通知
-      if (localTodosChanged) {
-        // 排序：未完成在前
-        _todos.sort((a, b) {
-          if (a.isDone == b.isDone) return 0;
-          return a.isDone ? 1 : -1;
-        });
-        StorageService.saveTodos(widget.username, _todos);
-        NotificationService.updateTodoNotification(_todos);
-      }
-
-      // ===========================
-      // 3. 同步倒计时 (双向合并)
-      // ===========================
-      List<dynamic> cloudCountdowns = await ApiService.fetchCountdowns(userId);
-
-      Map<String, dynamic> cloudCountMap = {};
-      for (var c in cloudCountdowns) {
-        String title = c['title'] ?? "";
-        if (title.isNotEmpty) cloudCountMap[title] = c;
-      }
-
-      Map<String, CountdownItem> localCountMap = {};
-      for (var c in _countdowns) {
-        localCountMap[c.title] = c;
-      }
-
-      // A. 本地 -> 云端
-      for (var item in _countdowns) {
-        if (!cloudCountMap.containsKey(item.title)) {
-          await ApiService.addCountdown(userId, item.title, item.targetDate);
-          uploadCount++;
-        }
-      }
-
-      // B. 云端 -> 本地
-      bool localCountdownsChanged = false;
-      for (var title in cloudCountMap.keys) {
-        if (!localCountMap.containsKey(title)) {
-          var cItem = cloudCountMap[title];
-          String dateStr = cItem['target_time'] ?? cItem['date'] ?? "";
-          DateTime? target = DateTime.tryParse(dateStr);
-
-          // 仅恢复尚未过期的倒计时
-          if (target != null && target.isAfter(DateTime.now())) {
-            _countdowns.add(CountdownItem(title: title, targetDate: target));
-            localCountdownsChanged = true;
-            downloadCount++;
-          }
-        }
-      }
-
-      if (localCountdownsChanged) {
-        // 按时间排序
-        _countdowns.sort((a, b) => a.targetDate.compareTo(b.targetDate));
-        StorageService.saveCountdowns(widget.username, _countdowns);
-      }
-
-      // 刷新界面
-      if (localTodosChanged || localCountdownsChanged) {
-        setState(() {});
-      }
-
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       if (mounted) {
-        String msg = '✅ 同步完成';
-        if (uploadCount > 0) msg += ' | 备份: $uploadCount';
-        if (downloadCount > 0) msg += ' | 恢复: $downloadCount';
-        if (uploadCount == 0 && downloadCount == 0) msg += ' (已是最新)';
-
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg), backgroundColor: Colors.green),
+          const SnackBar(content: Text('✅ 同步完成'), backgroundColor: Colors.green),
         );
+
+        // 如果有数据更新（例如从云端拉取了新数据），刷新界面
+        if (hasChanges) {
+          _loadAllData();
+        }
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('同步失败: ${e.toString().replaceAll("Exception: ", "")}'), backgroundColor: Colors.red),
         );
@@ -274,6 +121,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
   }
   // -------------------------
 
+  // ... (其余方法 _fetchRandomWallpaper, _startBackgroundDownload, _checkUpdatesAndNotices 保持不变) ...
   Future<void> _fetchRandomWallpaper() async {
     const String repoApiUrl =
         "https://api.github.com/repos/Junpgle/math_quiz_app/contents/wallpaper";
@@ -578,6 +426,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     _countdowns.add(CountdownItem(
                         title: titleCtrl.text, targetDate: selectedDate));
                   });
+                  // 保存时会自动同步
                   StorageService.saveCountdowns(widget.username, _countdowns);
                   _loadAllData();
                   Navigator.pop(ctx);
@@ -675,6 +524,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                   this.setState(() {
                     _todos.insert(0, newTodo);
                   });
+                  // 保存时自动同步
                   StorageService.saveTodos(widget.username, _todos);
                   _loadAllData();
                   Navigator.pop(ctx);
@@ -697,14 +547,18 @@ class _HomeDashboardState extends State<HomeDashboard> {
         return a.isDone ? 1 : -1;
       });
     });
-    _updateDataAndNotify(); // 修改：调用统一更新方法
+    // 调用统一更新 (包含同步)
+    StorageService.saveTodos(widget.username, _todos);
+    NotificationService.updateTodoNotification(_todos);
   }
 
   void _deleteTodo(String id) {
     setState(() {
       _todos.removeWhere((t) => t.id == id);
     });
-    _updateDataAndNotify(); // 修改：调用统一更新方法
+    // 调用统一更新 (包含同步)
+    StorageService.saveTodos(widget.username, _todos);
+    NotificationService.updateTodoNotification(_todos);
   }
 
   @override
@@ -757,13 +611,13 @@ class _HomeDashboardState extends State<HomeDashboard> {
                 ),
                 toolbarHeight: 80,
                 actions: [
-                  // --- 新增：手动云同步按钮 ---
+                  // --- 手动云同步按钮 ---
                   IconButton(
                     icon: _isSyncing
                         ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                         : Icon(Icons.cloud_sync, color: _wallpaperUrl != null ? Colors.white : null),
                     tooltip: "云端同步",
-                    onPressed: _isSyncing ? null : _handleCloudSync,
+                    onPressed: _isSyncing ? null : _handleManualSync,
                   ),
                   // ------------------------
                   IconButton(
@@ -965,7 +819,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
                         ),
                       const SizedBox(height: 24),
 
-                      // --- 3. 数学测验板块 (UI 修改处) ---
+                      // --- 3. 数学测验板块 ---
                       _buildSectionHeader("数学测验", Icons.functions),
                       Card(
                         elevation: 2,
@@ -979,14 +833,13 @@ class _HomeDashboardState extends State<HomeDashboard> {
                                 MaterialPageRoute(
                                     builder: (_) => MathMenuScreen(
                                         username: widget.username)));
-                            _refreshData();
+                            _loadAllData();
                           },
                           child: Padding(
                             padding: const EdgeInsets.all(20),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                // 1. 今日状态 (醒目提示)
                                 Row(
                                   children: [
                                     Icon(
@@ -1022,11 +875,8 @@ class _HomeDashboardState extends State<HomeDashboard> {
                                 const SizedBox(height: 20),
                                 const Divider(),
                                 const SizedBox(height: 10),
-
-                                // 2. 统计数据 (最佳战绩移到这里)
                                 Row(
                                   children: [
-                                    // 最佳战绩
                                     Expanded(
                                       child: Column(
                                         crossAxisAlignment:
@@ -1050,7 +900,6 @@ class _HomeDashboardState extends State<HomeDashboard> {
                                         ],
                                       ),
                                     ),
-                                    // 总正确率
                                     Expanded(
                                       child: Column(
                                         crossAxisAlignment:
