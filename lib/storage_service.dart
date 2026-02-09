@@ -259,7 +259,7 @@ class StorageService {
     return a.year == b.year && a.month == b.month && a.day == b.day;
   }
 
-  // --- 核心同步功能 (新增) ---
+  // --- 核心同步功能 (修复版：基于 updated_at 的精确同步) ---
   // 返回值：是否执行了任何更新 (true: 有数据变更, false: 无变更或失败)
   static Future<bool> syncData(String username) async {
     if (_isSyncing) return false; // 避免并发同步
@@ -272,7 +272,6 @@ class StorageService {
       if (userId == null) return false; // 未登录云端不执行
 
       // 1. 同步最高分 (本地历史记录 -> 云端)
-      // 计算本地最高分
       List<String> historyList = prefs.getStringList("history_$username") ?? [];
       int bestScore = 0;
       int bestDuration = 9999;
@@ -290,7 +289,6 @@ class StorageService {
         } catch (_) {}
       }
       if (bestScore > 0) {
-        // 尝试上传 (后端通常会处理去重或只保留最高分，这里简单触发上传)
         await ApiService.uploadScore(
           userId: userId,
           username: username,
@@ -299,7 +297,7 @@ class StorageService {
         );
       }
 
-      // 2. 同步待办事项 (双向比对)
+      // 2. 同步待办事项 (基于时间戳的双向同步)
       List<TodoItem> localTodos = await getTodos(username);
       List<dynamic> cloudTodos = await ApiService.fetchTodos(userId);
       bool localTodosChanged = false;
@@ -310,26 +308,31 @@ class StorageService {
         if (t['content'] != null) cloudMap[t['content']] = t;
       }
 
-      // A. 遍历本地：上传缺失的 或 更新状态 (Time Based)
+      // A. 遍历本地：上传缺失的 或 更新状态
       for (var localItem in localTodos) {
         if (cloudMap.containsKey(localItem.title)) {
-          // 冲突解决：比较时间
           var cloudItem = cloudMap[localItem.title];
           bool cloudDone = cloudItem['is_completed'] == 1 || cloudItem['is_completed'] == true;
-          // 注意：后端通常返回 created_at，作为云端状态的近似时间戳
-          DateTime cloudTime = DateTime.tryParse(cloudItem['created_at'] ?? "") ?? DateTime.fromMillisecondsSinceEpoch(0);
+          int cloudId = cloudItem['id'];
 
-          // 如果本地更新时间晚于云端记录时间 -> 以本地为准 (上传状态)
-          if (localItem.lastUpdated.isAfter(cloudTime)) {
-            if (localItem.isDone != cloudDone) {
-              await ApiService.toggleTodo(cloudItem['id'], localItem.isDone);
-            }
+          // 核心修复：解析云端时间戳
+          // D1 返回的 CURRENT_TIMESTAMP 是 UTC 格式 (e.g. "2023-10-01 12:00:00") 但可能不带 'Z'
+          // 为了正确比较，我们需要确保它被解析为 UTC，然后转为本地时间与 localItem.lastUpdated 比较
+          String timeStr = cloudItem['updated_at'] ?? cloudItem['created_at'] ?? "";
+          if (timeStr.isNotEmpty && !timeStr.endsWith('Z')) {
+            timeStr += 'Z'; // 强制视为 UTC
           }
-          // 如果云端记录时间晚于本地 -> 以云端为准 (下载状态)
-          else if (cloudTime.isAfter(localItem.lastUpdated)) {
-            if (localItem.isDone != cloudDone) {
+          DateTime cloudTime = DateTime.tryParse(timeStr)?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+          // 状态不一致时，谁的时间晚（谁更新），听谁的
+          if (localItem.isDone != cloudDone) {
+            if (localItem.lastUpdated.isAfter(cloudTime)) {
+              // 本地更新，推送到云端 (例如：刚点击了完成)
+              await ApiService.toggleTodo(cloudId, localItem.isDone);
+            } else {
+              // 云端更新，拉取到本地 (例如：在其他设备点过完成了)
               localItem.isDone = cloudDone;
-              localItem.lastUpdated = cloudTime; // 更新本地时间戳
+              localItem.lastUpdated = cloudTime; // 更新本地时间戳以保持一致
               localTodosChanged = true;
             }
           }
@@ -350,12 +353,15 @@ class StorageService {
 
           // 仅拉取未完成的任务进行恢复
           if (!isCompleted) {
+            String timeStr = cloudItem['updated_at'] ?? cloudItem['created_at'] ?? "";
+            if (timeStr.isNotEmpty && !timeStr.endsWith('Z')) timeStr += 'Z';
+
             localTodos.insert(0, TodoItem(
               id: const Uuid().v4(), // 生成新ID
               title: content,
               isDone: false,
               recurrence: RecurrenceType.none,
-              lastUpdated: DateTime.tryParse(cloudItem['created_at'] ?? "") ?? DateTime.now(),
+              lastUpdated: DateTime.tryParse(timeStr)?.toLocal() ?? DateTime.now(),
             ));
             localTodosChanged = true;
           }
